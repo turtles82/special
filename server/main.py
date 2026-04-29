@@ -11,7 +11,7 @@ from werkzeug.serving import is_running_from_reloader
 from curl_cffi import requests
 import random
 
-from modules import exceptions, utils, captions, ai
+from modules import exceptions, utils, captions, ai, auth
 import threading, time, json, os, hashlib, re
 import pathlib
 
@@ -20,12 +20,18 @@ print("Reading config...")
 base_dir = pathlib.Path(__file__).resolve().parent
 config_path = base_dir / "config" / "config.json"
 cache_path = base_dir / "cache" / "cache.json"
+mirrors_path = base_dir / "config" / "mirrors.json"
 
 config = json.loads(config_path.read_text())
 cache = None
 cache_path.parent.mkdir(exist_ok=True, parents=True)
 if cache_path.exists():
   cache = json.loads(cache_path.read_text())
+
+# Load mirrors configuration
+mirrors_config = None
+if mirrors_path.exists():
+  mirrors_config = json.loads(mirrors_path.read_text())
 
 #read config
 utils.include_traceback = config["include_traceback"]
@@ -156,12 +162,77 @@ def token_refresher():
 
 # ===== utility functions =====
 
+def require_token(f):
+  """Decorator to require token authentication on endpoints"""
+  def decorated(*args, **kwargs):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    
+    if not token:
+      response, status = utils.handle_exception(
+        exceptions.UnauthorizedError("No token provided. Please log in."),
+        status_code=401
+      )
+      return jsonify(response), status
+    
+    is_valid, error_msg = auth.token_manager.validate_token(token)
+    
+    if not is_valid:
+      response, status = utils.handle_exception(
+        exceptions.UnauthorizedError(error_msg or "Token invalid or expired. Please log in again."),
+        status_code=401
+      )
+      return jsonify(response), status
+    
+    # Token is valid, add to request context
+    request.auth_token = token
+    return f(*args, **kwargs)
+  
+  decorated.__name__ = f.__name__
+  return decorated
+
 # handle 429
 @app.errorhandler(429)
 def handle_rate_limit(e):
   return utils.handle_exception(e, status_code=429)
 
 # ===== api routes =====
+@app.route("/health")
+def health_check():
+  """Simple health check endpoint for mirror failover"""
+  return jsonify({
+    "status": "healthy",
+    "timestamp": time.time()
+  }), 200
+
+@app.route("/api/mirrors")
+def get_mirrors():
+  """Return available mirrors and failover configuration"""
+  if mirrors_config:
+    return jsonify(mirrors_config), 200
+  else:
+    # Return default mirror configuration
+    return jsonify({
+      "mirrors": [
+        {
+          "url": request.host_url.rstrip("/"),
+          "priority": 1,
+          "name": "Primary"
+        }
+      ],
+      "config": {
+        "health_check": {
+          "timeout_ms": 5000,
+          "interval_ms": 30000,
+          "endpoint": "/health"
+        },
+        "failover": {
+          "max_retries": 2,
+          "backoff_multiplier": 2,
+          "initial_backoff_ms": 1000
+        }
+      }
+    }), 200
+
 @app.route("/api/captions/<id>")
 @app.route("/api/captions/<id>/<language>")
 @limiter.limit(config["rate_limit"]["captions"])
@@ -257,6 +328,104 @@ def homepage():
 def discord():
   invite_url = f"https://discord.com/invite/5kmVs8AqDQ"
   return redirect(invite_url)
+
+@app.route("/privacy")
+def privacy():
+  return render_template("privacy.html")
+
+@app.route("/terms")
+def terms():
+  return render_template("terms.html")
+
+@app.route("/login")
+def login_page():
+  return render_template("login.html")
+
+@app.route("/dashboard")
+def dashboard():
+  return render_template("dashboard.html")
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+  """
+  Login endpoint - accepts email and password
+  For MVP, we use a simple hardcoded credential check
+  In production, integrate with your authentication system
+  """
+  data = request.get_json()
+  
+  if not data or not data.get("email") or not data.get("password"):
+    return utils.handle_exception(
+      exceptions.BadRequestError("Email and password are required"),
+      status_code=400
+    )
+  
+  email = data.get("email", "").strip()
+  password = data.get("password", "")
+  
+  # TODO: Implement proper user authentication
+  # For MVP, allow any non-empty credentials
+  # In production, verify against a user database
+  
+  if not email or not password:
+    return utils.handle_exception(
+      exceptions.UnauthorizedError("Invalid email or password"),
+      status_code=401
+    )
+  
+  # Generate token
+  token = auth.token_manager.generate_token()
+  
+  return jsonify({
+    "token": token,
+    "expires_at": auth.token_manager.tokens[token]["expires_at"],
+    "message": f"Login successful for {email}"
+  }), 200
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_logout():
+  """Logout endpoint - revokes a token"""
+  token = request.headers.get("Authorization", "").replace("Bearer ", "")
+  
+  if not token:
+    return utils.handle_exception(
+      exceptions.UnauthorizedError("No token provided"),
+      status_code=401
+    )
+  
+  if auth.token_manager.revoke_token(token):
+    return jsonify({"message": "Logout successful"}), 200
+  else:
+    return utils.handle_exception(
+      exceptions.UnauthorizedError("Token not found"),
+      status_code=401
+    )
+
+@app.route("/api/auth/validate", methods=["POST"])
+def api_validate_token():
+  """Validate if a token is still active"""
+  token = request.headers.get("Authorization", "").replace("Bearer ", "")
+  
+  if not token:
+    return utils.handle_exception(
+      exceptions.UnauthorizedError("No token provided"),
+      status_code=401
+    )
+  
+  is_valid, error_msg = auth.token_manager.validate_token(token)
+  
+  if is_valid:
+    token_info = auth.token_manager.get_token_info(token)
+    return jsonify({
+      "valid": True,
+      "expires_at": token_info["expires_at"],
+      "message": "Token is valid"
+    }), 200
+  else:
+    return utils.handle_exception(
+      exceptions.UnauthorizedError(error_msg or "Token invalid or expired"),
+      status_code=401
+    )
 
 
 # run the server

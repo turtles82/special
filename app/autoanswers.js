@@ -95,8 +95,24 @@ async function post_answer(attempt_id, questions_part) {
     body: JSON.stringify(content)
   });
 
-  if (response.status === 429) {
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    await post_answer(attempt_id, questions_part);
+  if (!response.ok) {
+    let error_msg = `Failed to submit answer (HTTP ${response.status}).`;
+    if (response.status === 401) {
+      error_msg = "Authentication failed. Please log in again.";
+    } else if (response.status === 403) {
+      error_msg = "Access denied. This assignment may be locked or you don't have permission.";
+    } else if (response.status === 429) {
+      error_msg = "Rate limited. Waiting 5 seconds before retrying...";
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      await post_answer(attempt_id, questions_part);
+      return;
+    } else if (response.status === 502) {
+      error_msg = "Server error. The Edpuzzle service may be temporarily unavailable. Try again in a moment.";
+    } else if (response.status === 503) {
+      error_msg = "Service unavailable. The Edpuzzle service may be temporarily down. Try again later.";
+    } else if (response.status === 504) {
+      error_msg = "Connection timed out. Check your internet and try again.";
+    }
+    throw new Error(error_msg);
   }
 }

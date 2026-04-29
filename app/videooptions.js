@@ -79,8 +79,8 @@ export function video_speed() {
   else if (media_source == "youtube") {
     let iframe = opener.document.querySelector("iframe");
     
-    if (iframe.id == null) {
-      alert("Error: Could not find the Youtube iframe.");
+    if (iframe == null || iframe.id == null) {
+      alert("Error: Video player not found. Ensure you're on an active Edpuzzle video and try again.");
       return;
     }
   
@@ -119,6 +119,6 @@ export function video_speed() {
   }
   
   else {
-    alert("Error: Unrecognized video source.");
+    alert(`Error: Unrecognized video source (${media_source}). Supported sources: YouTube, Vimeo, and built-in Edpuzzle player.`);
   }
 }  

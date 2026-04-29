@@ -1,0 +1,29 @@
+{
+  "mirrors": [
+    {
+      "url": "https://edpuzzle.hgci.org",
+      "priority": 1,
+      "name": "Primary Mirror"
+    },
+    {
+      "url": "https://edpuzzle-backup.example.com",
+      "priority": 2,
+      "name": "Backup Mirror"
+    },
+    {
+      "url": "https://edpuzzle-alt.example.com",
+      "priority": 3,
+      "name": "Alternative Mirror"
+    }
+  ],
+  "health_check": {
+    "timeout_ms": 5000,
+    "interval_ms": 30000,
+    "endpoint": "/health"
+  },
+  "failover": {
+    "max_retries": 2,
+    "backoff_multiplier": 2,
+    "initial_backoff_ms": 1000
+  }
+}

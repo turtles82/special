@@ -29,9 +29,29 @@ async function post_watchtime(attempt) {
   }
 
   let content = {"timeIntervalNumber": 10};
-  await fetch_with_auth(watch_url, {
-    method: "POST",
-    headers: await construct_headers(),
-    body: JSON.stringify(content)
-  });
+  let response;
+  try {
+    response = await fetch_with_auth(watch_url, {
+      method: "POST",
+      headers: await construct_headers(),
+      body: JSON.stringify(content)
+    });
+  }
+  catch(error) {
+    throw new Error(`Network error while skipping video: ${error}. Check your internet connection.`);
+  }
+  
+  if (!response.ok) {
+    let error_msg = `Failed to skip video (HTTP ${response.status}).`;
+    if (response.status === 401) {
+      error_msg = "Authentication failed. Please log in again and retry.";
+    } else if (response.status === 403) {
+      error_msg = "Access denied. You may not have permission to skip this video.";
+    } else if (response.status === 429) {
+      error_msg = "Rate limited. Try again in a few seconds.";
+    } else if (response.status >= 500) {
+      error_msg = "Server error. Try refreshing the page and skipping again.";
+    }
+    throw new Error(error_msg);
+  }
 }

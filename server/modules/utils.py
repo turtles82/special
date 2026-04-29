@@ -9,7 +9,11 @@ exception_dict = {
   "UnauthorizedError": 401,
   "ForbiddenError": 403,
   "BadGatewayError": 502,
-  "ServiceUnavailableException": 503
+  "ServiceUnavailableException": 503,
+  "NetworkTimeoutError": 504,
+  "RateLimitError": 429,
+  "ValidationError": 400,
+  "CaptionError": 403
 }
 
 type_dict = {
@@ -40,6 +44,8 @@ def handle_exception(exception, debug=None, status_code=None):
       "status": status,
       "message": message
     }
+    if hasattr(exception, "recovery_hint"):
+      response["recovery_hint"] = exception.recovery_hint
     if include_traceback:
       response["traceback"] = "".join(traceback.format_tb(exception.__traceback__))
     

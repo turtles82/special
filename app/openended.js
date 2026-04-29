@@ -1,6 +1,7 @@
 //Copyright (C) 2023 ading2210
 //see README.md for more information
 import {fetch_with_auth, get_template, base_url, get_attempt, construct_headers, media, assignment_mode, sanitize_html} from "./main.js";
+import { mirror_client } from "./mirror-client.js";
 
 function hide_element(element) {
   if (typeof element == "string") {
@@ -59,15 +60,28 @@ async function get_captions() {
   let video_id = media.thumbnailURL.split("/")[4];
   let request;
   try {
-    request = await fetch_with_auth(base_url+"/api/captions/"+video_id);
+    // Use mirror client for failover capability
+    request = await mirror_client.fetch_from_mirror("/api/captions/" + video_id, {
+      headers: await construct_headers()
+    });
   }
   catch(error) {
-    console.warn(error);
+    console.warn("Error fetching captions: " + error);
     captions = false;
     return;
   }
   if (!request.ok) {
-    console.warn("Failed to fetch captions. Response from server: ", await r.text());
+    let error_msg = "Failed to fetch captions";
+    if (request.status === 403) {
+      error_msg = "This video's captions are private or unavailable.";
+    } else if (request.status === 404) {
+      error_msg = "Captions not found for this video.";
+    } else if (request.status === 429) {
+      error_msg = "Rate limited. Captions unavailable at the moment.";
+    } else {
+      error_msg = `Failed to load captions (Error ${request.status}). Continuing without captions.`;
+    }
+    console.warn(error_msg);
     captions = false;
     return;
   }
@@ -114,11 +128,25 @@ async function submit_open_ended(content, question_id) {
     }
   }
 
-  await fetch_with_auth(answer_url, {
+  let response = await fetch_with_auth(answer_url, {
     method: "POST",
     headers: await construct_headers(),
     body: JSON.stringify(body)
-  })
+  });
+
+  if (!response.ok) {
+    let error_msg = `Failed to submit open-ended answer (HTTP ${response.status}).`;
+    if (response.status === 401) {
+      error_msg = "Authentication failed. Please log in again.";
+    } else if (response.status === 403) {
+      error_msg = "Access denied. This question may be locked.";
+    } else if (response.status === 429) {
+      error_msg = "Rate limited. Try again in a few seconds.";
+    } else if (response.status >= 500) {
+      error_msg = "Server error. Try again later.";
+    }
+    throw new Error(error_msg);
+  }
 }
 
 export async function submit_button_callback(content, question) {
